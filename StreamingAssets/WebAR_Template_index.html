@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Unity WebAR ArUco</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}
+#unity-container{width:100%;height:100%;position:relative}
+#unity-canvas{width:100%;height:100%;background:#000}
+#webglCameraVideo{
+ position:fixed;left:0;top:0;width:100%;height:100%;
+ object-fit:cover;z-index:0;display:none;
+ transform:scaleX(1);
+}
+#unity-container{z-index:1}
+#loading{position:fixed;z-index:20;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;color:white;font:20px Arial;background:#111}
+</style>
+</head>
+<body>
+<video id="webglCameraVideo" playsinline autoplay muted></video>
+<div id="unity-container">
+  <canvas id="unity-canvas" tabindex="-1"></canvas>
+</div>
+<div id="loading">Loading Unity...</div>
+
+<script>
+var video=document.getElementById("webglCameraVideo");
+var stream=null;
+window.WebAR_UnityReceiver="ARUcoWebARController";
+window.WebAR_UnityPreviewElement="webglCameraVideo";
+
+window.WebAR_StartCamera=async function(facingMode,width,height,fps){
+  try{
+    if(stream) window.WebAR_StopCamera();
+    stream=await navigator.mediaDevices.getUserMedia({
+      audio:false,
+      video:{
+        facingMode:facingMode===0?"environment":"user",
+        width:{ideal:width||1280},
+        height:{ideal:height||720},
+        frameRate:{ideal:fps||30}
+      }
+    });
+    video.srcObject=stream;
+    await video.play();
+    video.style.display="block";
+    window.WebAR_CameraReady=true;
+    console.log("[WebAR] camera started",video.videoWidth,video.videoHeight);
+    startArucoLoop();
+  }catch(e){
+    console.error("[WebAR] camera error",e);
+    alert("Camera could not start. Use HTTPS and allow camera permission.");
+  }
+};
+
+window.WebAR_StopCamera=function(){
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+  video.pause(); video.srcObject=null; video.style.display="none";
+  window.WebAR_CameraReady=false;
+};
+
+function sendPose(s){
+  if(window.unityInstance && window.WebAR_UnityReceiver){
+    try{
+      unityInstance.SendMessage(window.WebAR_UnityReceiver,"OnMarkerPose",s);
+    }catch(e){}
+  }
+}
+
+/*
+  ArUco detector hook.
+  This template accepts a detector object if supplied by the final detector script.
+  The important part is that the SAME video element is used by camera and detector.
+*/
+var arucoDetector=null;
+window.WebAR_SetArucoDetector=function(detector){arucoDetector=detector;};
+
+function startArucoLoop(){
+  if(window.__arucoLoop) return;
+  window.__arucoLoop=true;
+  function loop(){
+    if(video.readyState>=2 && arucoDetector && arucoDetector.detect){
+      try{
+        var detections=arucoDetector.detect(video);
+        if(detections && detections.length){
+          for(var i=0;i<detections.length;i++){
+            var d=detections[i];
+            if(d.poseString) sendPose(d.poseString);
+            else if(d.id!==undefined) sendPose(String(d.id)+",0,0,1,0,0,0,1,0.08");
+          }
+        }
+      }catch(e){}
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+}
+
+// Unity loader: replace Build/*.loader.js with your generated Unity build files.
+var buildUrl="Build";
+var loaderUrl=buildUrl+"/Build.loader.js";
+var config={
+ dataUrl:buildUrl+"/Build.data",
+ frameworkUrl:buildUrl+"/Build.framework.js",
+ codeUrl:buildUrl+"/Build.wasm",
+ streamingAssetsUrl:"StreamingAssets",
+ companyName:"WebAR",
+ productName:"Unity WebAR ArUco",
+ productVersion:"1.0"
+};
+var s=document.createElement("script");
+s.src=loaderUrl;
+s.onload=function(){
+  createUnityInstance(document.querySelector("#unity-canvas"),config,
+    function(p){})
+    .then(function(instance){
+      window.unityInstance=instance;
+      document.getElementById("loading").style.display="none";
+    })
+    .catch(function(e){console.error(e);});
+};
+document.body.appendChild(s);
+</script>
+</body>
+</html>
